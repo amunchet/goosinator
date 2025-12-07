@@ -1,4 +1,4 @@
-certifi==2022.9.24
+certifi==2024.7.4
 chardet==5.1.0
 charset-normalizer==3.0.1
 colorzero==2.0
