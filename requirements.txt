@@ -1,0 +1,19 @@
+certifi==2022.9.24
+chardet==5.1.0
+charset-normalizer==3.0.1
+colorzero==2.0
+distro==1.8.0
+gpiozero==2.0.1
+idna==3.3
+lgpio==0.2.2.0
+pigpio==1.78
+pycryptodomex==3.11.0
+
+requests
+RPi.GPIO
+smbus2
+toml
+urllib3
+
+# Web server
+Flask
