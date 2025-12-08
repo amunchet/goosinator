@@ -28,7 +28,7 @@ class PCA9685:
   __ALLLED_OFF_H       = 0xFD
 
   def __init__(self, address=0x40, debug=False):
-    self.bus = smbus.SMBus(1)
+    self.bus = smbus.SMBus(1) 
     self.address = address
     self.debug = debug
     if (self.debug):
@@ -83,10 +83,80 @@ class PCA9685:
     pulse = pulse*4096/20000        #PWM frequency is 50HZ,the period is 20000us
     self.setPWM(channel, 0, int(pulse))
 
-if __name__=='__main__':
  
+def cli():
+  """
+  Simple cli to move
+  NO LIMITS
+  """
   pwm = PCA9685(0x40, debug=False)
   pwm.setPWMFreq(50)
+  
+  laser_status = False
+  current_r = 0
+  current_y = 0
+
+  pwm.setServoPulse(0, 0)
+  time.sleep(1)
+  pwm.setServoPulse(4, 0)
+  time.sleep(1)
+
+  while(1):
+      print("Enter input:")
+      print("R [val] for rotation, Y [val] for Up/Down, Q to Quit, L for laser on/off")
+      print("Current R:", current_r, ", Current Y:", current_y)
+      i = input()
+      if "q" in i.lower():
+          print("All done")
+          break
+      
+      if "y" in i.lower():
+          val = int(i.split(" ")[-1].strip())
+          print("Moving Y to ", val)
+          pwm.setServoPulse(0, val)
+          current_y = val
+      
+      if "r" in i.lower():
+          val = int(i.split(" ")[-1].strip())
+          print("Moving R to ", val)
+          pwm.setServoPulse(4, val)
+          current_r = val
+      
+      if "l" in i.lower():
+          laser_on.main()
+
+def calibration():
+  pwm = PCA9685(0x40, debug=False)
+  pwm.setPWMFreq(50)
+  
+  laser_status = False
+  current_r = 0
+  current_y = 0
+
+  pwm.setServoPulse(0, 0)
+  time.sleep(1)
+  pwm.setServoPulse(4, 0)
+  time.sleep(1)
+  
+  step_r, step_y = 10,10 
+  for r in range(840, 1099, step_r):
+      print("Moving R to ", r)
+      pwm.setServoPulse(4, r)
+      
+      for y in range(400, 525, step_y):
+          print("Moving Y to ", y)
+          #pwm.setServoPulse(0, 750)
+          #time.sleep(0.25)
+          pwm.setServoPulse(0, y)
+          laser_on.main()
+      
+
+
+
+
+if __name__ == "__main__":
+  calibration()
+  """
   pwm.setServoPulse(4, 1750) # This is rotation
   time.sleep(1)
   pwm.setServoPulse(0, 600) # This is the up and down
@@ -106,3 +176,4 @@ if __name__=='__main__':
     #pwm.setServoPulse(4,i) 
     pwm.setServoPulse(0,i) 
     time.sleep(0.02)  
+  """

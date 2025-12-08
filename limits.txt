@@ -1,0 +1,11 @@
+R 1099 - Left most side
+R 840 - Right most side
+
+We have an immense amount of backlash in Y
+
+For Y - always going to a larger number (like 750, then moving back to position)
+
+Y 375 is the lowest position
+Y 545 is the highest position
+
+about half the camera isn't reachable by the current setup
