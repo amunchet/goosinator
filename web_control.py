@@ -47,6 +47,73 @@ class Calibration:
     y_bottom: int = Y_MIN
 
 
+@dataclass
+class GridCalibrationPoint:
+    # Expected normalized position
+    expected_x: float
+    expected_y: float
+    # Actual clicked normalized position
+    actual_x: float
+    actual_y: float
+    # Servo positions used
+    servo_r: int
+    servo_y: int
+
+
+class GridCalibration:
+    def __init__(self, grid_rows: int = 5, grid_cols: int = 5):
+        self.grid_rows = grid_rows
+        self.grid_cols = grid_cols
+        self.points: list[GridCalibrationPoint] = []
+        self.active = False
+        self.current_index = 0
+
+    def reset(self):
+        self.points = []
+        self.active = False
+        self.current_index = 0
+
+    def get_expected_position(self, index: int) -> tuple[float, float]:
+        """Get expected normalized x,y for grid point index"""
+        if index >= self.grid_rows * self.grid_cols:
+            return (0.5, 0.5)
+        row = index // self.grid_cols
+        col = index % self.grid_cols
+        x = col / (self.grid_cols - 1) if self.grid_cols > 1 else 0.5
+        y = row / (self.grid_rows - 1) if self.grid_rows > 1 else 0.5
+        return (x, y)
+
+    def add_point(self, expected_x: float, expected_y: float, actual_x: float, actual_y: float, servo_r: int, servo_y: int):
+        self.points.append(GridCalibrationPoint(expected_x, expected_y, actual_x, actual_y, servo_r, servo_y))
+
+    def apply_correction(self, click_x: float, click_y: float) -> tuple[float, float]:
+        """Apply bilinear interpolation to correct click position based on error map"""
+        if len(self.points) < 4:
+            return (click_x, click_y)
+
+        # Find 4 nearest points for bilinear interpolation
+        # Simple approach: use inverse distance weighting
+        total_weight = 0.0
+        correction_x = 0.0
+        correction_y = 0.0
+
+        for pt in self.points:
+            dist = ((pt.expected_x - click_x)**2 + (pt.expected_y - click_y)**2)**0.5
+            if dist < 0.001:  # Very close, use directly
+                return (pt.actual_x, pt.actual_y)
+            weight = 1.0 / (dist + 0.01)  # Add small epsilon to avoid division by zero
+            total_weight += weight
+            correction_x += weight * (pt.actual_x - pt.expected_x)
+            correction_y += weight * (pt.actual_y - pt.expected_y)
+
+        if total_weight > 0:
+            correction_x /= total_weight
+            correction_y /= total_weight
+            return (click_x + correction_x, click_y + correction_y)
+
+        return (click_x, click_y)
+
+
 app = Flask(__name__)
 lock = threading.Lock()
 
@@ -68,6 +135,7 @@ state = {
     "step": 5,
 }
 calibration = Calibration()
+grid_calibration = GridCalibration(grid_rows=5, grid_cols=5)
 
 
 def clamp(value: int, lo: int, hi: int) -> int:
@@ -138,6 +206,22 @@ def video_feed():
 
 @app.route("/api/state")
 def api_state():
+    grid_state = None
+    if grid_calibration.active:
+        exp_x, exp_y = grid_calibration.get_expected_position(grid_calibration.current_index)
+        grid_state = {
+            "active": True,
+            "current_index": grid_calibration.current_index,
+            "total_points": grid_calibration.grid_rows * grid_calibration.grid_cols,
+            "expected_x": exp_x,
+            "expected_y": exp_y,
+        }
+    else:
+        grid_state = {
+            "active": False,
+            "points_collected": len(grid_calibration.points),
+        }
+
     return jsonify(
         {
             **state,
@@ -147,6 +231,7 @@ def api_state():
                 "y_top": calibration.y_top,
                 "y_bottom": calibration.y_bottom,
             },
+            "grid_calibration": grid_state,
         }
     )
 
@@ -210,7 +295,40 @@ def api_click():
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "x and y must be numbers"}), 400
 
-    r_target, y_target = normalized_to_servo(x, y)
+    # Handle grid calibration clicks
+    if grid_calibration.active:
+        expected_x, expected_y = grid_calibration.get_expected_position(grid_calibration.current_index)
+        grid_calibration.add_point(
+            expected_x, expected_y,
+            x, y,
+            state["current_r"], state["current_y"]
+        )
+        grid_calibration.current_index += 1
+
+        # Check if calibration complete
+        if grid_calibration.current_index >= grid_calibration.grid_rows * grid_calibration.grid_cols:
+            grid_calibration.active = False
+            return jsonify({"ok": True, "calibration_complete": True, "points": len(grid_calibration.points)})
+
+        # Move to next grid position
+        next_x, next_y = grid_calibration.get_expected_position(grid_calibration.current_index)
+        r_next, y_next = normalized_to_servo(next_x, next_y)
+        with lock:
+            move_r(r_next)
+            time.sleep(AXIS_MOVE_DELAY_SEC)
+            move_y(y_next)
+
+        return jsonify({
+            "ok": True,
+            "calibration_active": True,
+            "current_index": grid_calibration.current_index,
+            "expected_x": next_x,
+            "expected_y": next_y,
+        })
+
+    # Normal click with correction applied
+    corrected_x, corrected_y = grid_calibration.apply_correction(x, y)
+    r_target, y_target = normalized_to_servo(corrected_x, corrected_y)
 
     # Brownout-safe behavior: move one axis at a time (sequential), not simultaneously.
     with lock:
@@ -224,6 +342,7 @@ def api_click():
             "moved_axis": "r_then_y",
             "r": state["current_r"],
             "y": state["current_y"],
+            "corrected": (corrected_x != x or corrected_y != y),
         }
     )
 
@@ -237,6 +356,55 @@ def api_toggle_laser():
         else:
             laser.off()
     return jsonify({"ok": True, "laser_on": state["laser_on"]})
+
+
+@app.route("/api/grid_calibration/start", methods=["POST"])
+def api_grid_calibration_start():
+    payload = request.get_json(silent=True) or {}
+    rows = int(payload.get("rows", 5))
+    cols = int(payload.get("cols", 5))
+
+    with lock:
+        grid_calibration.grid_rows = clamp(rows, 3, 10)
+        grid_calibration.grid_cols = clamp(cols, 3, 10)
+        grid_calibration.reset()
+        grid_calibration.active = True
+        grid_calibration.current_index = 0
+
+        # Turn on laser and move to first position
+        state["laser_on"] = True
+        laser.on()
+
+        first_x, first_y = grid_calibration.get_expected_position(0)
+        r_first, y_first = normalized_to_servo(first_x, first_y)
+        move_r(r_first)
+        time.sleep(AXIS_MOVE_DELAY_SEC)
+        move_y(y_first)
+
+    return jsonify({
+        "ok": True,
+        "grid_rows": grid_calibration.grid_rows,
+        "grid_cols": grid_calibration.grid_cols,
+        "total_points": grid_calibration.grid_rows * grid_calibration.grid_cols,
+        "expected_x": first_x,
+        "expected_y": first_y,
+    })
+
+
+@app.route("/api/grid_calibration/cancel", methods=["POST"])
+def api_grid_calibration_cancel():
+    with lock:
+        grid_calibration.active = False
+        state["laser_on"] = False
+        laser.off()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/grid_calibration/clear", methods=["POST"])
+def api_grid_calibration_clear():
+    with lock:
+        grid_calibration.points = []
+    return jsonify({"ok": True, "points_cleared": True})
 
 
 if __name__ == "__main__":

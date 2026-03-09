@@ -12,9 +12,43 @@
     .primary { background: #38bdf8; color: #111; }
     .danger { background: #ef4444; color: #fff; }
     .muted { background: #444; color: #fff; }
+    .success { background: #10b981; color: #fff; }
     img { width: 100%; border-radius: 10px; border: 2px solid #333; cursor: crosshair; }
     input { width: 90px; }
     code { color: #a7f3d0; }
+    
+    /* Grid calibration modal */
+    #gridCalibModal {
+      display: none;
+      position: fixed;
+      top: 0; left: 0;
+      width: 100vw; height: 100vh;
+      background: rgba(0,0,0,0.95);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+    }
+    #gridCalibModal.active { display: flex; }
+    #gridCalibModal .instructions {
+      background: #222;
+      padding: 20px;
+      border-radius: 10px;
+      margin-bottom: 20px;
+      text-align: center;
+      max-width: 600px;
+    }
+    #gridCalibModal .stream-container { position: relative; max-width: 90vw; }
+    #gridCalibModal img { max-width: 100%; border: 3px solid #38bdf8; }
+    #gridCalibModal .crosshair {
+      position: absolute;
+      width: 30px; height: 30px;
+      border: 2px solid #10b981;
+      border-radius: 50%;
+      pointer-events: none;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 10px #10b981;
+    }
   </style>
 </head>
 <body>
@@ -55,8 +89,31 @@
         <button onclick="setEdge('bottom')" class="primary">Set Bottom Edge</button>
       </div>
 
+      <h4>Grid Calibration</h4>
+      <div class="row">
+        <button id="startGridCalib" class="success">Start Grid Calibration</button>
+      </div>
+      <div class="row">
+        <button id="clearGridCalib" class="muted">Clear Error Map</button>
+      </div>
+      <div id="gridCalibStatus" style="font-size: 0.9em; color: #a7f3d0;"></div>
+
       <h4>Status</h4>
       <div id="status"></div>
+    </div>
+  </div>
+
+  <!-- Grid Calibration Modal -->
+  <div id="gridCalibModal">
+    <div class="instructions">
+      <h2>Grid Calibration</h2>
+      <p id="gridCalibInstructions">Click where you see the laser pointer</p>
+      <p><strong id="gridCalibProgress">Point 1 of 25</strong></p>
+      <button id="cancelGridCalib" class="danger" style="margin-top: 10px;">Cancel</button>
+    </div>
+    <div class="stream-container">
+      <img id="gridCalibStream" src="{{ url_for('video_feed') }}" alt="calibration stream" />
+      <div id="gridCalibCrosshair" class="crosshair" style="display: none;"></div>
     </div>
   </div>
 
@@ -82,6 +139,18 @@ async function refresh() {
     <div>Calib R left/right: <code>${data.calibration.r_left}</code> / <code>${data.calibration.r_right}</code></div>
     <div>Calib Y top/bottom: <code>${data.calibration.y_top}</code> / <code>${data.calibration.y_bottom}</code></div>
   `;
+
+  // Update grid calibration status
+  const gridStatus = document.getElementById('gridCalibStatus');
+  if (data.grid_calibration) {
+    if (data.grid_calibration.active) {
+      gridStatus.textContent = `Grid calibration in progress...`;
+    } else if (data.grid_calibration.points_collected > 0) {
+      gridStatus.textContent = `Error map active (${data.grid_calibration.points_collected} points)`;
+    } else {
+      gridStatus.textContent = 'No error map';
+    }
+  }
 }
 
 async function jog(axis, dir) {
@@ -114,6 +183,73 @@ document.getElementById('stream').addEventListener('click', async (event) => {
   await postJSON('/api/click', { x, y });
   refresh();
 });
+
+// Grid calibration
+let gridCalibActive = false;
+
+document.getElementById('startGridCalib').addEventListener('click', async () => {
+  const res = await postJSON('/api/grid_calibration/start', { rows: 5, cols: 5 });
+  if (res.ok) {
+    gridCalibActive = true;
+    document.getElementById('gridCalibModal').classList.add('active');
+    updateGridCalibUI(res);
+  }
+});
+
+document.getElementById('cancelGridCalib').addEventListener('click', async () => {
+  await postJSON('/api/grid_calibration/cancel', {});
+  gridCalibActive = false;
+  document.getElementById('gridCalibModal').classList.remove('active');
+  refresh();
+});
+
+document.getElementById('clearGridCalib').addEventListener('click', async () => {
+  if (confirm('Clear error correction map?')) {
+    await postJSON('/api/grid_calibration/clear', {});
+    refresh();
+  }
+});
+
+document.getElementById('gridCalibStream').addEventListener('click', async (event) => {
+  if (!gridCalibActive) return;
+  
+  const img = event.target;
+  const rect = img.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / rect.width;
+  const y = (event.clientY - rect.top) / rect.height;
+  
+  // Show crosshair briefly at click location
+  const crosshair = document.getElementById('gridCalibCrosshair');
+  crosshair.style.left = `${(event.clientX - rect.left)}px`;
+  crosshair.style.top = `${(event.clientY - rect.top)}px`;
+  crosshair.style.display = 'block';
+  setTimeout(() => crosshair.style.display = 'none', 500);
+  
+  const res = await postJSON('/api/click', { x, y });
+  
+  if (res.calibration_complete) {
+    gridCalibActive = false;
+    document.getElementById('gridCalibModal').classList.remove('active');
+    alert(`Grid calibration complete! Collected ${res.points} correction points.`);
+    refresh();
+  } else if (res.calibration_active) {
+    updateGridCalibUI(res);
+  }
+});
+
+function updateGridCalibUI(data) {
+  const progress = document.getElementById('gridCalibProgress');
+  progress.textContent = `Point ${data.current_index + 1} of ${data.total_points}`;
+  
+  // Show expected position hint
+  const crosshair = document.getElementById('gridCalibCrosshair');
+  const img = document.getElementById('gridCalibStream');
+  const rect = img.getBoundingClientRect();
+  crosshair.style.left = `${data.expected_x * rect.width}px`;
+  crosshair.style.top = `${data.expected_y * rect.height}px`;
+  crosshair.style.display = 'block';
+  crosshair.style.borderColor = '#fbbf24'; // yellow for expected position
+}
 
 refresh();
 setInterval(refresh, 2000);
