@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import threading
+import time
 from dataclasses import dataclass
 
 import cv2
@@ -24,10 +25,15 @@ Y_MAX = 545
 
 # Backlash compensation (intentional): move high first, then down to target
 Y_BACKLASH_OVERSHOOT = 750
+AXIS_MOVE_DELAY_SEC = 0.08
 
-# UI/Camera direction tuning (set True when physical motion is reversed)
-INVERT_R = True
-INVERT_Y = True
+# Direction tuning
+# Jog buttons were intentionally inverted to match user expectation.
+INVERT_JOG_R = True
+INVERT_JOG_Y = True
+# Click mapping uses calibration directly; keep non-inverted unless camera is mirrored.
+INVERT_CLICK_R = False
+INVERT_CLICK_Y = False
 
 
 @dataclass
@@ -95,9 +101,9 @@ def normalized_to_servo(x_norm: float, y_norm: float) -> tuple[int, int]:
     x_norm = max(0.0, min(1.0, x_norm))
     y_norm = max(0.0, min(1.0, y_norm))
 
-    if INVERT_R:
+    if INVERT_CLICK_R:
         x_norm = 1.0 - x_norm
-    if INVERT_Y:
+    if INVERT_CLICK_Y:
         y_norm = 1.0 - y_norm
 
     r = round(calibration.r_left + (calibration.r_right - calibration.r_left) * x_norm)
@@ -162,11 +168,11 @@ def api_jog():
 
     with lock:
         if axis == "r":
-            if INVERT_R:
+            if INVERT_JOG_R:
                 delta = -delta
             move_r(state["current_r"] + delta, clamp_limits=False)
         elif axis == "y":
-            if INVERT_Y:
+            if INVERT_JOG_Y:
                 delta = -delta
             move_y(state["current_y"] + delta, clamp_limits=False)
         else:
@@ -205,8 +211,21 @@ def api_click():
         return jsonify({"ok": False, "error": "x and y must be numbers"}), 400
 
     r_target, y_target = normalized_to_servo(x, y)
-    move_to(r_target, y_target)
-    return jsonify({"ok": True, "r": state["current_r"], "y": state["current_y"]})
+
+    # Brownout-safe behavior: move one axis at a time (sequential), not simultaneously.
+    with lock:
+        move_r(r_target)
+        time.sleep(AXIS_MOVE_DELAY_SEC)
+        move_y(y_target)
+
+    return jsonify(
+        {
+            "ok": True,
+            "moved_axis": "r_then_y",
+            "r": state["current_r"],
+            "y": state["current_y"],
+        }
+    )
 
 
 @app.route("/api/toggle_laser", methods=["POST"])
