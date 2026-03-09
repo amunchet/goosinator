@@ -145,8 +145,8 @@ def calibration():
       
       for y in range(400, 525, step_y):
           print("Moving Y to ", y)
-          #pwm.setServoPulse(0, 750)
-          #time.sleep(0.25)
+          pwm.setServoPulse(0, 750)
+          time.sleep(0.25)
           pwm.setServoPulse(0, y)
           laser_on.main()
       
