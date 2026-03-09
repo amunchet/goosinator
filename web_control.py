@@ -45,6 +45,36 @@ class Calibration:
     r_right: int = R_MIN
     y_top: int = Y_MAX
     y_bottom: int = Y_MIN
+    
+    # Click-based calibration points (x/y click position, servo position)
+    left_point: tuple[float, int] | None = None  # (x_click, r_servo)
+    right_point: tuple[float, int] | None = None
+    top_point: tuple[float, int] | None = None  # (y_click, y_servo)
+    bottom_point: tuple[float, int] | None = None
+    
+    def extrapolate_edges(self) -> bool:
+        """Calculate image edges from calibration points. Returns True if successful."""
+        # Need left and right points for R axis
+        if self.left_point and self.right_point:
+            x1, r1 = self.left_point
+            x2, r2 = self.right_point
+            if abs(x2 - x1) > 0.1:  # Require reasonable separation
+                slope = (r2 - r1) / (x2 - x1)
+                self.r_left = round(r1 - slope * x1)  # Extrapolate to x=0
+                self.r_right = round(r2 + slope * (1.0 - x2))  # Extrapolate to x=1
+        
+        # Need top and bottom points for Y axis
+        if self.top_point and self.bottom_point:
+            y1, y_servo1 = self.top_point
+            y2, y_servo2 = self.bottom_point
+            if abs(y2 - y1) > 0.1:  # Require reasonable separation
+                slope = (y_servo2 - y_servo1) / (y2 - y1)
+                self.y_top = round(y_servo1 - slope * y1)  # Extrapolate to y=0
+                self.y_bottom = round(y_servo2 + slope * (1.0 - y2))  # Extrapolate to y=1
+        
+        # Return True if we have complete calibration
+        return (self.left_point is not None and self.right_point is not None and
+                self.top_point is not None and self.bottom_point is not None)
 
 
 @dataclass
@@ -133,6 +163,7 @@ state = {
     "current_y": int((Y_MIN + Y_MAX) / 2),
     "laser_on": False,
     "step": 5,
+    "edge_calib_mode": None,  # 'left', 'right', 'top', 'bottom', or None
 }
 calibration = Calibration()
 grid_calibration = GridCalibration(grid_rows=5, grid_cols=5)
@@ -230,6 +261,10 @@ def api_state():
                 "r_right": calibration.r_right,
                 "y_top": calibration.y_top,
                 "y_bottom": calibration.y_bottom,
+                "left_point_set": calibration.left_point is not None,
+                "right_point_set": calibration.right_point is not None,
+                "top_point_set": calibration.top_point is not None,
+                "bottom_point_set": calibration.bottom_point is not None,
             },
             "grid_calibration": grid_state,
         }
@@ -268,22 +303,15 @@ def api_jog():
 
 @app.route("/api/set_edge", methods=["POST"])
 def api_set_edge():
+    """Enter edge calibration mode - next click on image will set this edge point"""
     payload = request.get_json(silent=True) or {}
     edge = str(payload.get("edge", "")).lower()
 
-    with lock:
-        if edge == "left":
-            calibration.r_left = state["current_r"]
-        elif edge == "right":
-            calibration.r_right = state["current_r"]
-        elif edge == "top":
-            calibration.y_top = state["current_y"]
-        elif edge == "bottom":
-            calibration.y_bottom = state["current_y"]
-        else:
-            return jsonify({"ok": False, "error": "edge must be left/right/top/bottom"}), 400
+    if edge not in ["left", "right", "top", "bottom"]:
+        return jsonify({"ok": False, "error": "edge must be left/right/top/bottom"}), 400
 
-    return jsonify({"ok": True})
+    state["edge_calib_mode"] = edge
+    return jsonify({"ok": True, "mode": edge, "message": f"Click on image near {edge} edge"})
 
 
 @app.route("/api/click", methods=["POST"])
@@ -294,6 +322,30 @@ def api_click():
         y = float(payload.get("y", 0.5))
     except (TypeError, ValueError):
         return jsonify({"ok": False, "error": "x and y must be numbers"}), 400
+
+    # Handle edge calibration clicks
+    if state["edge_calib_mode"]:
+        mode = state["edge_calib_mode"]
+        with lock:
+            if mode == "left":
+                calibration.left_point = (x, state["current_r"])
+            elif mode == "right":
+                calibration.right_point = (x, state["current_r"])
+            elif mode == "top":
+                calibration.top_point = (y, state["current_y"])
+            elif mode == "bottom":
+                calibration.bottom_point = (y, state["current_y"])
+            
+            # Try to extrapolate edges
+            calibration.extrapolate_edges()
+            state["edge_calib_mode"] = None
+        
+        return jsonify({
+            "ok": True,
+            "edge_calibration": True,
+            "mode": mode,
+            "extrapolated": True,
+        })
 
     # Handle grid calibration clicks
     if grid_calibration.active:

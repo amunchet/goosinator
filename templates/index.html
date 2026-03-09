@@ -79,15 +79,16 @@
         <button onclick="jog('y', 1)">▼ Down</button>
       </div>
 
-      <h4>Set edges (at current servo position)</h4>
+      <h4>Set edges (click on image near edge)</h4>
       <div class="row">
-        <button onclick="setEdge('left')" class="primary">Set Left Edge</button>
-        <button onclick="setEdge('right')" class="primary">Set Right Edge</button>
+        <button onclick="setEdge('left')" class="primary" id="leftEdgeBtn">Set Left Point</button>
+        <button onclick="setEdge('right')" class="primary" id="rightEdgeBtn">Set Right Point</button>
       </div>
       <div class="row">
-        <button onclick="setEdge('top')" class="primary">Set Top Edge</button>
-        <button onclick="setEdge('bottom')" class="primary">Set Bottom Edge</button>
+        <button onclick="setEdge('top')" class="primary" id="topEdgeBtn">Set Top Point</button>
+        <button onclick="setEdge('bottom')" class="primary" id="bottomEdgeBtn">Set Bottom Point</button>
       </div>
+      <p id="edgeCalibInfo" style="font-size: 0.85em; color: #fbbf24;"></p>
 
       <h4>Grid Calibration</h4>
       <div class="row">
@@ -142,6 +143,29 @@ async function refresh() {
     <div>Calib R left/right: <code>${data.calibration.r_left}</code> / <code>${data.calibration.r_right}</code></div>
     <div>Calib Y top/bottom: <code>${data.calibration.y_top}</code> / <code>${data.calibration.y_bottom}</code></div>
   `;
+
+  // Update edge calibration button states
+  const edgeInfo = document.getElementById('edgeCalibInfo');
+  if (data.edge_calib_mode) {
+    edgeInfo.textContent = `▶ Click on image near ${data.edge_calib_mode} edge`;
+    document.getElementById('stream').style.borderColor = '#fbbf24';
+  } else {
+    edgeInfo.textContent = '';
+    document.getElementById('stream').style.borderColor = '#333';
+    
+    // Show which points are set
+    const points = [];
+    if (data.calibration.left_point_set) points.push('L');
+    if (data.calibration.right_point_set) points.push('R');
+    if (data.calibration.top_point_set) points.push('T');
+    if (data.calibration.bottom_point_set) points.push('B');
+    if (points.length > 0) {
+      edgeInfo.textContent = `Points set: ${points.join(', ')}`;
+      edgeInfo.style.color = '#10b981';
+    } else {
+      edgeInfo.style.color = '#fbbf24';
+    }
+  }
 
   // Update grid calibration status
   const gridStatus = document.getElementById('gridCalibStatus');
