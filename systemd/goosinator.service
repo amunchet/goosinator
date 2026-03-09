@@ -1,0 +1,13 @@
+[Unit]
+Description=Goosinator
+After=network.target
+
+[Service]
+User=root
+WorkingDirectory=/home/amunchet/goosinator
+# Environment="PATH=/home/pi/myflaskapp/venv/bin"
+ExecStart=/usr/bin/python3.11 web_control.py
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
