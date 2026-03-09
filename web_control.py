@@ -25,6 +25,10 @@ Y_MAX = 545
 # Backlash compensation (intentional): move high first, then down to target
 Y_BACKLASH_OVERSHOOT = 750
 
+# UI/Camera direction tuning (set True when physical motion is reversed)
+INVERT_R = True
+INVERT_Y = True
+
 
 @dataclass
 class Calibration:
@@ -64,28 +68,37 @@ def clamp(value: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, value))
 
 
-def move_r(target: int) -> None:
-    target = clamp(int(target), R_MIN, R_MAX)
+def move_r(target: int, clamp_limits: bool = True) -> None:
+    target = int(target)
+    if clamp_limits:
+        target = clamp(target, R_MIN, R_MAX)
     pwm.setServoPulse(R_CHANNEL, target)
     state["current_r"] = target
 
 
-def move_y(target: int) -> None:
-    target = clamp(int(target), Y_MIN, Y_MAX)
+def move_y(target: int, clamp_limits: bool = True) -> None:
+    target = int(target)
+    if clamp_limits:
+        target = clamp(target, Y_MIN, Y_MAX)
     pwm.setServoPulse(Y_CHANNEL, Y_BACKLASH_OVERSHOOT)
     pwm.setServoPulse(Y_CHANNEL, target)
     state["current_y"] = target
 
 
-def move_to(r_target: int, y_target: int) -> None:
+def move_to(r_target: int, y_target: int, clamp_limits: bool = True) -> None:
     with lock:
-        move_r(r_target)
-        move_y(y_target)
+        move_r(r_target, clamp_limits=clamp_limits)
+        move_y(y_target, clamp_limits=clamp_limits)
 
 
 def normalized_to_servo(x_norm: float, y_norm: float) -> tuple[int, int]:
     x_norm = max(0.0, min(1.0, x_norm))
     y_norm = max(0.0, min(1.0, y_norm))
+
+    if INVERT_R:
+        x_norm = 1.0 - x_norm
+    if INVERT_Y:
+        y_norm = 1.0 - y_norm
 
     r = round(calibration.r_left + (calibration.r_right - calibration.r_left) * x_norm)
     y = round(calibration.y_top + (calibration.y_bottom - calibration.y_top) * y_norm)
@@ -136,7 +149,7 @@ def api_state():
 def api_step():
     payload = request.get_json(silent=True) or {}
     step = int(payload.get("step", state["step"]))
-    state["step"] = clamp(step, 1, 100)
+    state["step"] = clamp(step, 1, 150)
     return jsonify({"ok": True, "step": state["step"]})
 
 
@@ -149,9 +162,13 @@ def api_jog():
 
     with lock:
         if axis == "r":
-            move_r(state["current_r"] + delta)
+            if INVERT_R:
+                delta = -delta
+            move_r(state["current_r"] + delta, clamp_limits=False)
         elif axis == "y":
-            move_y(state["current_y"] + delta)
+            if INVERT_Y:
+                delta = -delta
+            move_y(state["current_y"] + delta, clamp_limits=False)
         else:
             return jsonify({"ok": False, "error": "axis must be 'r' or 'y'"}), 400
 
