@@ -21,7 +21,7 @@ PWM_FREQ_HZ = 50
 R_MIN = 840
 R_MAX = 1099
 Y_MIN = 375
-Y_MAX = 545
+Y_MAX = 700
 
 # Backlash compensation (intentional): move high first, then down to target
 Y_BACKLASH_OVERSHOOT = 750
