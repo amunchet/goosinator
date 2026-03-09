@@ -1,0 +1,122 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Goosinator Control</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; background: #151515; color: #f5f5f5; }
+    .wrap { display: grid; grid-template-columns: 1fr 360px; gap: 16px; padding: 16px; }
+    .panel { background: #222; border-radius: 10px; padding: 12px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+    button { padding: 8px 10px; border: 0; border-radius: 8px; cursor: pointer; }
+    .primary { background: #38bdf8; color: #111; }
+    .danger { background: #ef4444; color: #fff; }
+    .muted { background: #444; color: #fff; }
+    img { width: 100%; border-radius: 10px; border: 2px solid #333; cursor: crosshair; }
+    input { width: 90px; }
+    code { color: #a7f3d0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="panel">
+      <h3>Camera (click to point laser)</h3>
+      <img id="stream" src="{{ url_for('video_feed') }}" alt="camera stream" />
+      <p id="clickInfo">Click on image to move.</p>
+    </div>
+
+    <div class="panel">
+      <h3>Laser</h3>
+      <div class="row">
+        <button id="laserBtn" class="danger">Laser OFF</button>
+      </div>
+
+      <h3>Calibration / Jog</h3>
+      <div class="row">
+        <label>Step <input id="step" type="number" min="1" max="100" value="5" /></label>
+        <button id="setStep" class="muted">Set Step</button>
+      </div>
+      <div class="row">
+        <button onclick="jog('r', -1)">◀ Left</button>
+        <button onclick="jog('r', 1)">Right ▶</button>
+      </div>
+      <div class="row">
+        <button onclick="jog('y', -1)">▲ Up</button>
+        <button onclick="jog('y', 1)">▼ Down</button>
+      </div>
+
+      <h4>Set edges (at current servo position)</h4>
+      <div class="row">
+        <button onclick="setEdge('left')" class="primary">Set Left Edge</button>
+        <button onclick="setEdge('right')" class="primary">Set Right Edge</button>
+      </div>
+      <div class="row">
+        <button onclick="setEdge('top')" class="primary">Set Top Edge</button>
+        <button onclick="setEdge('bottom')" class="primary">Set Bottom Edge</button>
+      </div>
+
+      <h4>Status</h4>
+      <div id="status"></div>
+    </div>
+  </div>
+
+<script>
+async function postJSON(url, body) {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  return res.json();
+}
+
+async function refresh() {
+  const res = await fetch('/api/state');
+  const data = await res.json();
+  const laserBtn = document.getElementById('laserBtn');
+  laserBtn.textContent = data.laser_on ? 'Laser ON' : 'Laser OFF';
+  laserBtn.className = data.laser_on ? 'primary' : 'danger';
+  document.getElementById('step').value = data.step;
+  document.getElementById('status').innerHTML = `
+    <div>R: <code>${data.current_r}</code> | Y: <code>${data.current_y}</code></div>
+    <div>Calib R left/right: <code>${data.calibration.r_left}</code> / <code>${data.calibration.r_right}</code></div>
+    <div>Calib Y top/bottom: <code>${data.calibration.y_top}</code> / <code>${data.calibration.y_bottom}</code></div>
+  `;
+}
+
+async function jog(axis, dir) {
+  await postJSON('/api/jog', { axis, dir });
+  refresh();
+}
+
+async function setEdge(edge) {
+  await postJSON('/api/set_edge', { edge });
+  refresh();
+}
+
+document.getElementById('setStep').addEventListener('click', async () => {
+  const step = parseInt(document.getElementById('step').value || '5', 10);
+  await postJSON('/api/step', { step });
+  refresh();
+});
+
+document.getElementById('laserBtn').addEventListener('click', async () => {
+  await postJSON('/api/toggle_laser', {});
+  refresh();
+});
+
+document.getElementById('stream').addEventListener('click', async (event) => {
+  const img = event.target;
+  const rect = img.getBoundingClientRect();
+  const x = (event.clientX - rect.left) / rect.width;
+  const y = (event.clientY - rect.top) / rect.height;
+  document.getElementById('clickInfo').textContent = `Click x=${x.toFixed(3)} y=${y.toFixed(3)}`;
+  await postJSON('/api/click', { x, y });
+  refresh();
+});
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>

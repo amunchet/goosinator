@@ -6,6 +6,9 @@ sudo apt update
 sudo apt install -y \
   libcap-dev \
   libcamera-apps \
+  python3-flask \
+  python3-gpiozero \
   python3-libcamera \
   python3-picamera2 \
-  python3-opencv
+  python3-opencv \
+  python3-smbus
