@@ -109,7 +109,10 @@
       <h2>Grid Calibration</h2>
       <p id="gridCalibInstructions">Click where you see the laser pointer</p>
       <p><strong id="gridCalibProgress">Point 1 of 25</strong></p>
-      <button id="cancelGridCalib" class="danger" style="margin-top: 10px;">Cancel</button>
+      <div style="display: flex; gap: 10px; justify-content: center; margin-top: 10px;">
+        <button id="skipGridCalibPoint" class="muted">Skip (Don't See Laser)</button>
+        <button id="cancelGridCalib" class="danger">Cancel</button>
+      </div>
     </div>
     <div class="stream-container">
       <img id="gridCalibStream" src="{{ url_for('video_feed') }}" alt="calibration stream" />
@@ -201,6 +204,21 @@ document.getElementById('cancelGridCalib').addEventListener('click', async () =>
   gridCalibActive = false;
   document.getElementById('gridCalibModal').classList.remove('active');
   refresh();
+});
+
+document.getElementById('skipGridCalibPoint').addEventListener('click', async () => {
+  if (!gridCalibActive) return;
+  
+  const res = await postJSON('/api/grid_calibration/skip', {});
+  
+  if (res.calibration_complete) {
+    gridCalibActive = false;
+    document.getElementById('gridCalibModal').classList.remove('active');
+    alert(`Grid calibration complete! Collected ${res.points} correction points.`);
+    refresh();
+  } else if (res.ok) {
+    updateGridCalibUI(res);
+  }
 });
 
 document.getElementById('clearGridCalib').addEventListener('click', async () => {

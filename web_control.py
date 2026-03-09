@@ -400,6 +400,38 @@ def api_grid_calibration_cancel():
     return jsonify({"ok": True})
 
 
+@app.route("/api/grid_calibration/skip", methods=["POST"])
+def api_grid_calibration_skip():
+    """Skip current calibration point when laser is not visible"""
+    if not grid_calibration.active:
+        return jsonify({"ok": False, "error": "No active calibration"}), 400
+
+    with lock:
+        grid_calibration.current_index += 1
+
+        # Check if calibration complete
+        if grid_calibration.current_index >= grid_calibration.grid_rows * grid_calibration.grid_cols:
+            grid_calibration.active = False
+            state["laser_on"] = False
+            laser.off()
+            return jsonify({"ok": True, "calibration_complete": True, "points": len(grid_calibration.points)})
+
+        # Move to next grid position
+        next_x, next_y = grid_calibration.get_expected_position(grid_calibration.current_index)
+        r_next, y_next = normalized_to_servo(next_x, next_y)
+        move_r(r_next)
+        time.sleep(AXIS_MOVE_DELAY_SEC)
+        move_y(y_next)
+
+    return jsonify({
+        "ok": True,
+        "skipped": True,
+        "current_index": grid_calibration.current_index,
+        "expected_x": next_x,
+        "expected_y": next_y,
+    })
+
+
 @app.route("/api/grid_calibration/clear", methods=["POST"])
 def api_grid_calibration_clear():
     with lock:
