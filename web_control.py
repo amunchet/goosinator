@@ -39,6 +39,14 @@ AXIS_MOVE_DELAY_SEC = 0.08
 R_DEADBAND = 8
 Y_DEADBAND = 10
 
+# Directional command bias (pulse units)
+# INC applies when requested target is greater than current; DEC when lower.
+# Positive values push farther in that direction.
+R_TARGET_BIAS_INC = 0
+R_TARGET_BIAS_DEC = 0
+Y_TARGET_BIAS_INC = 0
+Y_TARGET_BIAS_DEC = 0
+
 # Direction tuning
 # Jog buttons were intentionally inverted to match user expectation.
 INVERT_JOG_R = True
@@ -255,6 +263,10 @@ def _deadband_adjust_target(axis: str, current: int, requested: int) -> tuple[in
 def move_r(target: int, clamp_limits: bool = True) -> None:
     current = state["current_r"]
     requested = int(target)
+    if requested > current:
+        requested += R_TARGET_BIAS_INC
+    elif requested < current:
+        requested -= R_TARGET_BIAS_DEC
     target, moved = _deadband_adjust_target("r", current, requested)
     if not moved:
         return
@@ -273,6 +285,10 @@ def move_r(target: int, clamp_limits: bool = True) -> None:
 def move_y(target: int, clamp_limits: bool = True) -> None:
     current = state["current_y"]
     requested = int(target)
+    if requested > current:
+        requested += Y_TARGET_BIAS_INC
+    elif requested < current:
+        requested -= Y_TARGET_BIAS_DEC
     target, moved = _deadband_adjust_target("y", current, requested)
     if not moved:
         return
