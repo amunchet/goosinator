@@ -31,6 +31,11 @@ Y_APPROACH_FROM_HIGH = True
 BACKLASH_SETTLE_SEC = 0.02
 AXIS_MOVE_DELAY_SEC = 0.08
 
+# Deadband compensation (pulse units)
+# Small commands below deadband are accumulated until movement is meaningful.
+R_DEADBAND = 8
+Y_DEADBAND = 10
+
 # Direction tuning
 # Jog buttons were intentionally inverted to match user expectation.
 INVERT_JOG_R = True
@@ -199,6 +204,9 @@ state = {
 calibration = Calibration()
 grid_calibration = GridCalibration(grid_rows=5, grid_cols=5)
 
+# Accumulate sub-deadband commands per axis
+deadband_residual = {"r": 0.0, "y": 0.0}
+
 
 def clamp(value: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, value))
@@ -213,8 +221,38 @@ def _apply_backlash(channel: int, target: int, delta: int, approach_from_high: b
     pwm.setServoPulse(channel, int(target))
 
 
+def _deadband_adjust_target(axis: str, current: int, requested: int) -> tuple[int, bool]:
+    """
+    Convert requested absolute target into an executable target accounting for deadband.
+    Returns (target_to_execute, moved).
+    """
+    requested = int(requested)
+    delta = requested - current
+    if delta == 0:
+        return current, False
+
+    db = R_DEADBAND if axis == "r" else Y_DEADBAND
+
+    # If request is already large enough, execute directly and clear accumulated residue.
+    if abs(delta) >= db:
+        deadband_residual[axis] = 0.0
+        return requested, True
+
+    # For small requests, accumulate until enough to overcome deadband.
+    deadband_residual[axis] += delta
+    if abs(deadband_residual[axis]) < db:
+        return current, False
+
+    # Execute an effective move in the accumulated direction.
+    step = int(round(deadband_residual[axis]))
+    deadband_residual[axis] = 0.0
+    return current + step, True
+
+
 def move_r(target: int, clamp_limits: bool = True) -> None:
-    target = int(target)
+    target, moved = _deadband_adjust_target("r", state["current_r"], int(target))
+    if not moved:
+        return
     if clamp_limits:
         target = clamp(target, R_MIN, R_MAX)
     _apply_backlash(
@@ -227,7 +265,9 @@ def move_r(target: int, clamp_limits: bool = True) -> None:
 
 
 def move_y(target: int, clamp_limits: bool = True) -> None:
-    target = int(target)
+    target, moved = _deadband_adjust_target("y", state["current_y"], int(target))
+    if not moved:
+        return
     if clamp_limits:
         target = clamp(target, Y_MIN, Y_MAX)
     _apply_backlash(
