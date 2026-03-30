@@ -23,9 +23,12 @@ R_MAX = 1149
 Y_MIN = 917
 Y_MAX = 1117
 
-# Backlash compensation (intentional): move high first, then down to target
-R_BACKLASH_DELTA = 14
-Y_BACKLASH_DELTA = 22
+# Backlash compensation (intentional): direction-specific deltas
+# INC = target > current, DEC = target < current
+R_BACKLASH_DELTA_INC = 10
+R_BACKLASH_DELTA_DEC = 14
+Y_BACKLASH_DELTA_INC = 10
+Y_BACKLASH_DELTA_DEC = 14
 R_APPROACH_FROM_HIGH = True
 Y_APPROACH_FROM_HIGH = True
 BACKLASH_SETTLE_SEC = 0.02
@@ -250,30 +253,36 @@ def _deadband_adjust_target(axis: str, current: int, requested: int) -> tuple[in
 
 
 def move_r(target: int, clamp_limits: bool = True) -> None:
-    target, moved = _deadband_adjust_target("r", state["current_r"], int(target))
+    current = state["current_r"]
+    requested = int(target)
+    target, moved = _deadband_adjust_target("r", current, requested)
     if not moved:
         return
     if clamp_limits:
         target = clamp(target, R_MIN, R_MAX)
+    delta = R_BACKLASH_DELTA_INC if target > current else R_BACKLASH_DELTA_DEC
     _apply_backlash(
         channel=R_CHANNEL,
         target=target,
-        delta=R_BACKLASH_DELTA,
+        delta=delta,
         approach_from_high=R_APPROACH_FROM_HIGH,
     )
     state["current_r"] = target
 
 
 def move_y(target: int, clamp_limits: bool = True) -> None:
-    target, moved = _deadband_adjust_target("y", state["current_y"], int(target))
+    current = state["current_y"]
+    requested = int(target)
+    target, moved = _deadband_adjust_target("y", current, requested)
     if not moved:
         return
     if clamp_limits:
         target = clamp(target, Y_MIN, Y_MAX)
+    delta = Y_BACKLASH_DELTA_INC if target > current else Y_BACKLASH_DELTA_DEC
     _apply_backlash(
         channel=Y_CHANNEL,
         target=target,
-        delta=Y_BACKLASH_DELTA,
+        delta=delta,
         approach_from_high=Y_APPROACH_FROM_HIGH,
     )
     state["current_y"] = target
