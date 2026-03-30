@@ -24,7 +24,11 @@ Y_MIN = 375
 Y_MAX = 700
 
 # Backlash compensation (intentional): move high first, then down to target
-Y_BACKLASH_OVERSHOOT = 750
+R_BACKLASH_DELTA = 14
+Y_BACKLASH_DELTA = 22
+R_APPROACH_FROM_HIGH = True
+Y_APPROACH_FROM_HIGH = True
+BACKLASH_SETTLE_SEC = 0.02
 AXIS_MOVE_DELAY_SEC = 0.08
 
 # Direction tuning
@@ -200,11 +204,25 @@ def clamp(value: int, lo: int, hi: int) -> int:
     return max(lo, min(hi, value))
 
 
+def _apply_backlash(channel: int, target: int, delta: int, approach_from_high: bool) -> None:
+    """Always approach target from same direction to reduce backlash error."""
+    preload = target + delta if approach_from_high else target - delta
+    if preload != target:
+        pwm.setServoPulse(channel, int(preload))
+        time.sleep(BACKLASH_SETTLE_SEC)
+    pwm.setServoPulse(channel, int(target))
+
+
 def move_r(target: int, clamp_limits: bool = True) -> None:
     target = int(target)
     if clamp_limits:
         target = clamp(target, R_MIN, R_MAX)
-    pwm.setServoPulse(R_CHANNEL, target)
+    _apply_backlash(
+        channel=R_CHANNEL,
+        target=target,
+        delta=R_BACKLASH_DELTA,
+        approach_from_high=R_APPROACH_FROM_HIGH,
+    )
     state["current_r"] = target
 
 
@@ -212,8 +230,12 @@ def move_y(target: int, clamp_limits: bool = True) -> None:
     target = int(target)
     if clamp_limits:
         target = clamp(target, Y_MIN, Y_MAX)
-    pwm.setServoPulse(Y_CHANNEL, Y_BACKLASH_OVERSHOOT)
-    pwm.setServoPulse(Y_CHANNEL, target)
+    _apply_backlash(
+        channel=Y_CHANNEL,
+        target=target,
+        delta=Y_BACKLASH_DELTA,
+        approach_from_high=Y_APPROACH_FROM_HIGH,
+    )
     state["current_y"] = target
 
 
