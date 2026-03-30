@@ -43,9 +43,9 @@ Y_DEADBAND = 10
 # INC applies when requested target is greater than current; DEC when lower.
 # Positive values push farther in that direction.
 R_TARGET_BIAS_INC = 0
-R_TARGET_BIAS_DEC = 0
+R_TARGET_BIAS_DEC = 20
 Y_TARGET_BIAS_INC = 0
-Y_TARGET_BIAS_DEC = 0
+Y_TARGET_BIAS_DEC = 20
 
 # Direction tuning
 # Jog buttons were intentionally inverted to match user expectation.
