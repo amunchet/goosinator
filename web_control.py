@@ -97,11 +97,38 @@ class GridCalibration:
         self.points: list[GridCalibrationPoint] = []
         self.active = False
         self.current_index = 0
+        self.pending_actual: tuple[float, float] | None = None
 
     def reset(self):
         self.points = []
         self.active = False
         self.current_index = 0
+        self.pending_actual = None
+
+    def total_points(self) -> int:
+        return self.grid_rows * self.grid_cols
+
+    def set_pending_click(self, actual_x: float, actual_y: float):
+        self.pending_actual = (
+            max(0.0, min(1.0, float(actual_x))),
+            max(0.0, min(1.0, float(actual_y))),
+        )
+
+    def save_current_point(self, servo_r: int, servo_y: int) -> bool:
+        """Save pending click for current target point. Returns False if no pending click."""
+        if self.pending_actual is None:
+            return False
+
+        expected_x, expected_y = self.get_expected_position(self.current_index)
+        actual_x, actual_y = self.pending_actual
+        self.add_point(expected_x, expected_y, actual_x, actual_y, servo_r, servo_y)
+
+        self.current_index += 1
+        self.pending_actual = None
+
+        if self.current_index >= self.total_points():
+            self.active = False
+        return True
 
     def get_expected_position(self, index: int) -> tuple[float, float]:
         """Get expected normalized x,y for grid point index"""
@@ -243,14 +270,19 @@ def api_state():
         grid_state = {
             "active": True,
             "current_index": grid_calibration.current_index,
-            "total_points": grid_calibration.grid_rows * grid_calibration.grid_cols,
+            "total_points": grid_calibration.total_points(),
             "expected_x": exp_x,
             "expected_y": exp_y,
+            "pending_click": {
+                "x": grid_calibration.pending_actual[0],
+                "y": grid_calibration.pending_actual[1],
+            } if grid_calibration.pending_actual else None,
         }
     else:
         grid_state = {
             "active": False,
             "points_collected": len(grid_calibration.points),
+            "total_points": grid_calibration.total_points(),
         }
 
     return jsonify(
@@ -347,37 +379,6 @@ def api_click():
             "extrapolated": True,
         })
 
-    # Handle grid calibration clicks
-    if grid_calibration.active:
-        expected_x, expected_y = grid_calibration.get_expected_position(grid_calibration.current_index)
-        grid_calibration.add_point(
-            expected_x, expected_y,
-            x, y,
-            state["current_r"], state["current_y"]
-        )
-        grid_calibration.current_index += 1
-
-        # Check if calibration complete
-        if grid_calibration.current_index >= grid_calibration.grid_rows * grid_calibration.grid_cols:
-            grid_calibration.active = False
-            return jsonify({"ok": True, "calibration_complete": True, "points": len(grid_calibration.points)})
-
-        # Move to next grid position
-        next_x, next_y = grid_calibration.get_expected_position(grid_calibration.current_index)
-        r_next, y_next = normalized_to_servo(next_x, next_y)
-        with lock:
-            move_r(r_next)
-            time.sleep(AXIS_MOVE_DELAY_SEC)
-            move_y(y_next)
-
-        return jsonify({
-            "ok": True,
-            "calibration_active": True,
-            "current_index": grid_calibration.current_index,
-            "expected_x": next_x,
-            "expected_y": next_y,
-        })
-
     # Normal click with correction applied
     corrected_x, corrected_y = grid_calibration.apply_correction(x, y)
     r_target, y_target = normalized_to_servo(corrected_x, corrected_y)
@@ -422,22 +423,20 @@ def api_grid_calibration_start():
         grid_calibration.reset()
         grid_calibration.active = True
         grid_calibration.current_index = 0
+        grid_calibration.pending_actual = None
 
-        # Turn on laser and move to first position
+        # Turn on laser for manual calibration
         state["laser_on"] = True
         laser.on()
 
         first_x, first_y = grid_calibration.get_expected_position(0)
-        r_first, y_first = normalized_to_servo(first_x, first_y)
-        move_r(r_first)
-        time.sleep(AXIS_MOVE_DELAY_SEC)
-        move_y(y_first)
 
     return jsonify({
         "ok": True,
         "grid_rows": grid_calibration.grid_rows,
         "grid_cols": grid_calibration.grid_cols,
-        "total_points": grid_calibration.grid_rows * grid_calibration.grid_cols,
+        "total_points": grid_calibration.total_points(),
+        "current_index": grid_calibration.current_index,
         "expected_x": first_x,
         "expected_y": first_y,
     })
@@ -459,10 +458,11 @@ def api_grid_calibration_skip():
         return jsonify({"ok": False, "error": "No active calibration"}), 400
 
     with lock:
+        grid_calibration.pending_actual = None
         grid_calibration.current_index += 1
 
         # Check if calibration complete
-        if grid_calibration.current_index >= grid_calibration.grid_rows * grid_calibration.grid_cols:
+        if grid_calibration.current_index >= grid_calibration.total_points():
             grid_calibration.active = False
             state["laser_on"] = False
             laser.off()
@@ -470,18 +470,72 @@ def api_grid_calibration_skip():
 
         # Move to next grid position
         next_x, next_y = grid_calibration.get_expected_position(grid_calibration.current_index)
-        r_next, y_next = normalized_to_servo(next_x, next_y)
-        move_r(r_next)
-        time.sleep(AXIS_MOVE_DELAY_SEC)
-        move_y(y_next)
 
     return jsonify({
         "ok": True,
         "skipped": True,
         "current_index": grid_calibration.current_index,
+        "total_points": grid_calibration.total_points(),
         "expected_x": next_x,
         "expected_y": next_y,
     })
+
+
+@app.route("/api/grid_calibration/pending_click", methods=["POST"])
+def api_grid_calibration_pending_click():
+    """Record clicked laser location for current grid target (does not save yet)."""
+    if not grid_calibration.active:
+        return jsonify({"ok": False, "error": "No active calibration"}), 400
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        x = float(payload.get("x"))
+        y = float(payload.get("y"))
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "x and y must be numbers"}), 400
+
+    with lock:
+        grid_calibration.set_pending_click(x, y)
+
+    return jsonify(
+        {
+            "ok": True,
+            "pending_click": {
+                "x": grid_calibration.pending_actual[0],
+                "y": grid_calibration.pending_actual[1],
+            },
+        }
+    )
+
+
+@app.route("/api/grid_calibration/save_point", methods=["POST"])
+def api_grid_calibration_save_point():
+    """Save current target point using last pending click and current servo position."""
+    if not grid_calibration.active:
+        return jsonify({"ok": False, "error": "No active calibration"}), 400
+
+    with lock:
+        saved = grid_calibration.save_current_point(state["current_r"], state["current_y"])
+        if not saved:
+            return jsonify({"ok": False, "error": "Click on image first"}), 400
+
+        if not grid_calibration.active:
+            state["laser_on"] = False
+            laser.off()
+            return jsonify({"ok": True, "calibration_complete": True, "points": len(grid_calibration.points)})
+
+        next_x, next_y = grid_calibration.get_expected_position(grid_calibration.current_index)
+        return jsonify(
+            {
+                "ok": True,
+                "saved": True,
+                "current_index": grid_calibration.current_index,
+                "total_points": grid_calibration.total_points(),
+                "expected_x": next_x,
+                "expected_y": next_y,
+                "points": len(grid_calibration.points),
+            }
+        )
 
 
 @app.route("/api/grid_calibration/clear", methods=["POST"])

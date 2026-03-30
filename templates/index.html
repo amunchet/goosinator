@@ -49,6 +49,25 @@
       transform: translate(-50%, -50%);
       box-shadow: 0 0 10px #10b981;
     }
+    #gridCalibModal .grid-overlay {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(to right, rgba(56,189,248,0.45) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(56,189,248,0.45) 1px, transparent 1px);
+      background-size: 20% 20%;
+    }
+    #gridCalibModal .target-dot {
+      position: absolute;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: #fbbf24;
+      box-shadow: 0 0 10px #fbbf24;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
   </style>
 </head>
 <body>
@@ -92,7 +111,7 @@
 
       <h4>Grid Calibration</h4>
       <div class="row">
-        <button id="startGridCalib" class="success">Start Grid Calibration</button>
+        <button id="startGridCalib" class="success">Open Grid Calibration</button>
       </div>
       <div class="row">
         <button id="clearGridCalib" class="muted">Clear Error Map</button>
@@ -107,17 +126,31 @@
   <!-- Grid Calibration Modal -->
   <div id="gridCalibModal">
     <div class="instructions">
-      <h2>Grid Calibration</h2>
-      <p id="gridCalibInstructions">Click where you see the laser pointer</p>
+      <h2>Grid Calibration (Manual)</h2>
+      <p id="gridCalibInstructions">Move laser to the yellow target using jog controls, click where laser appears, then Save Point.</p>
       <p><strong id="gridCalibProgress">Point 1 of 25</strong></p>
+      <div class="row" style="justify-content:center;">
+        <label>Step <input id="gridStep" type="number" min="1" max="150" value="10" /></label>
+        <button id="setGridStep" class="muted">Set Step</button>
+      </div>
+      <div class="row" style="justify-content:center;">
+        <button onclick="jog('r', -1)">◀ Left</button>
+        <button onclick="jog('r', 1)">Right ▶</button>
+        <button onclick="jog('y', -1)">▲ Up</button>
+        <button onclick="jog('y', 1)">▼ Down</button>
+      </div>
       <div style="display: flex; gap: 10px; justify-content: center; margin-top: 10px;">
+        <button id="saveGridCalibPoint" class="success">Save Point</button>
         <button id="skipGridCalibPoint" class="muted">Skip (Don't See Laser)</button>
         <button id="cancelGridCalib" class="danger">Cancel</button>
       </div>
+      <p id="gridPendingInfo" style="color:#a7f3d0; min-height: 1.2em; margin-top: 8px;"></p>
     </div>
     <div class="stream-container">
       <img id="gridCalibStream" src="{{ url_for('video_feed') }}" alt="calibration stream" />
-      <div id="gridCalibCrosshair" class="crosshair" style="display: none;"></div>
+      <div class="grid-overlay"></div>
+      <div id="gridCalibTargetDot" class="target-dot" style="display: none;"></div>
+      <div id="gridCalibCrosshair" class="crosshair" style="display: none; border-color:#10b981;"></div>
     </div>
   </div>
 
@@ -196,6 +229,13 @@ document.getElementById('setStep').addEventListener('click', async () => {
   refresh();
 });
 
+document.getElementById('setGridStep').addEventListener('click', async () => {
+  const step = parseInt(document.getElementById('gridStep').value || '10', 10);
+  await postJSON('/api/step', { step });
+  document.getElementById('step').value = String(step);
+  refresh();
+});
+
 document.getElementById('laserBtn').addEventListener('click', async () => {
   await postJSON('/api/toggle_laser', {});
   refresh();
@@ -219,6 +259,7 @@ document.getElementById('startGridCalib').addEventListener('click', async () => 
   if (res.ok) {
     gridCalibActive = true;
     document.getElementById('gridCalibModal').classList.add('active');
+    document.getElementById('gridPendingInfo').textContent = 'No click captured yet.';
     updateGridCalibUI(res);
   }
 });
@@ -241,6 +282,28 @@ document.getElementById('skipGridCalibPoint').addEventListener('click', async ()
     alert(`Grid calibration complete! Collected ${res.points} correction points.`);
     refresh();
   } else if (res.ok) {
+    document.getElementById('gridPendingInfo').textContent = 'Skipped current point.';
+    updateGridCalibUI(res);
+  }
+});
+
+document.getElementById('saveGridCalibPoint').addEventListener('click', async () => {
+  if (!gridCalibActive) return;
+  const res = await postJSON('/api/grid_calibration/save_point', {});
+  if (!res.ok) {
+    alert(res.error || 'Click image first, then save.');
+    return;
+  }
+
+  document.getElementById('gridCalibCrosshair').style.display = 'none';
+  document.getElementById('gridPendingInfo').textContent = 'Point saved.';
+
+  if (res.calibration_complete) {
+    gridCalibActive = false;
+    document.getElementById('gridCalibModal').classList.remove('active');
+    alert(`Grid calibration complete! Collected ${res.points} correction points.`);
+    refresh();
+  } else {
     updateGridCalibUI(res);
   }
 });
@@ -260,37 +323,28 @@ document.getElementById('gridCalibStream').addEventListener('click', async (even
   const x = (event.clientX - rect.left) / rect.width;
   const y = (event.clientY - rect.top) / rect.height;
   
-  // Show crosshair briefly at click location
+  // Capture clicked laser location for current target (not saved until Save Point)
   const crosshair = document.getElementById('gridCalibCrosshair');
-  crosshair.style.left = `${(event.clientX - rect.left)}px`;
-  crosshair.style.top = `${(event.clientY - rect.top)}px`;
+  crosshair.style.left = `${event.clientX - rect.left}px`;
+  crosshair.style.top = `${event.clientY - rect.top}px`;
   crosshair.style.display = 'block';
-  setTimeout(() => crosshair.style.display = 'none', 500);
-  
-  const res = await postJSON('/api/click', { x, y });
-  
-  if (res.calibration_complete) {
-    gridCalibActive = false;
-    document.getElementById('gridCalibModal').classList.remove('active');
-    alert(`Grid calibration complete! Collected ${res.points} correction points.`);
-    refresh();
-  } else if (res.calibration_active) {
-    updateGridCalibUI(res);
+  const res = await postJSON('/api/grid_calibration/pending_click', { x, y });
+  if (res.ok) {
+    document.getElementById('gridPendingInfo').textContent = `Captured click x=${x.toFixed(3)}, y=${y.toFixed(3)}. Press Save Point.`;
   }
 });
 
 function updateGridCalibUI(data) {
   const progress = document.getElementById('gridCalibProgress');
   progress.textContent = `Point ${data.current_index + 1} of ${data.total_points}`;
-  
-  // Show expected position hint
-  const crosshair = document.getElementById('gridCalibCrosshair');
+
+  // Show expected target position on 5x5 grid
+  const targetDot = document.getElementById('gridCalibTargetDot');
   const img = document.getElementById('gridCalibStream');
   const rect = img.getBoundingClientRect();
-  crosshair.style.left = `${data.expected_x * rect.width}px`;
-  crosshair.style.top = `${data.expected_y * rect.height}px`;
-  crosshair.style.display = 'block';
-  crosshair.style.borderColor = '#fbbf24'; // yellow for expected position
+  targetDot.style.left = `${data.expected_x * rect.width}px`;
+  targetDot.style.top = `${data.expected_y * rect.height}px`;
+  targetDot.style.display = 'block';
 }
 
 refresh();
