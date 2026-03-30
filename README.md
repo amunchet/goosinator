@@ -28,3 +28,14 @@ sudo apt install -y \
 ```
 
 Seems as though you need to run python outside of VENV for interaction with special Pi5 packages
+
+# NOTES
+- Make sure to reset `limits.txt` LIMITS any time the laser changes!
+I changed from pointing directly out of the assembly to at more of a right angle.  This messed up the limits (but helped the laser be able to point down).
+
+## Camera calibration
+- Need to do the Aruco Board camera thing
+
+## Servo backlash and deadband
+- This hardware definitely seems to have deadbands (small commands do nothing, then it jumps).
+- There is some backlash correction, but it's static for now.
