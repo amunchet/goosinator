@@ -18,10 +18,10 @@ Y_CHANNEL = 0  # vertical (up/down)
 PWM_FREQ_HZ = 50
 
 # Known safe-ish limits from limits.txt
-R_MIN = 840
-R_MAX = 1099
-Y_MIN = 375
-Y_MAX = 700
+R_MIN = 889
+R_MAX = 1149
+Y_MIN = 917
+Y_MAX = 1117
 
 # Backlash compensation (intentional): move high first, then down to target
 R_BACKLASH_DELTA = 14
